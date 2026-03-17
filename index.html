@@ -1,0 +1,456 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Hierarchical Transforms</title>
+</head>
+<body>
+    <canvas id="webgl-canvas" width="500" height="500"></canvas>
+    <script>
+// Vertex shader source code
+const vertexShaderSource = `
+    attribute vec2 aPosition;
+    attribute vec4 aColor;
+    varying vec4 vColor;
+    uniform mat3 mMatrix;
+    uniform mat3 pMatrix;
+
+    void main() {
+        vColor = aColor;
+        vec3 hPosition = vec3(aPosition, 1.0);
+        gl_Position = vec4(pMatrix * mMatrix * hPosition, 1.0); 
+        gl_PointSize = 5.0;
+    }
+`;
+</script>
+<script>
+    // Fragment shader source code
+    const fragmentShaderSource = `
+        precision mediump float;
+        varying vec4 vColor;
+
+        void main() {
+            gl_FragColor = vColor;
+        }
+    `;
+</script>
+<script type="text/javascript" src="setupShader.js"></script>
+<script>
+
+
+function setIdentityMatrix () {
+    return new Float32Array([
+        1,0,0,
+        0,1,0,
+        0,0,1,
+    ])
+}
+
+function multiplyMatrix3x3(a, b) {
+    let result = new Array(9).fill(0);
+
+    for (let col = 0; col < 3; col++) {  
+        for (let row = 0; row < 3; row++) {  
+            let sum = 0;
+            for (let k = 0; k < 3; k++) {  
+                // sum += a[row][k] * b[k][col];
+                // Remembering that our matrices are stored in column-major order
+                sum += a[row + k * 3] * b[k + col * 3];
+            }
+            // result[row][col] = sum;
+            // result in the column-major order too
+            result[row + col * 3] = sum;
+        }
+    }
+
+    return result;
+}
+
+// Functions to create transformation matrices we set before
+function setRotationMatrix(angle){
+    const rad = angle * Math.PI / 180;
+    const cosAngle = Math.cos(rad);
+    const sinAngle = Math.sin(rad);
+    return [
+            cosAngle,   sinAngle, 0.0,
+            -sinAngle,  cosAngle, 0.0,
+            0.0,        0.0,      1.0,
+        ];
+}
+
+function setTranslationMatrix(tx, ty) {
+    return [
+            1, 0, 0,
+            0, 1, 0,
+            tx,ty,1,
+        ];
+}
+
+function setScalingMatrix(sx, sy) {
+    return [
+            sx, 0,  0,
+            0,  sy, 0,
+            0,  0,  1,
+        ];
+}
+
+// helper function to set rectangle vertices with width and height
+function setRectangle (width, height) {
+    return new Float32Array([
+        0, 0, width, 0, 0, height,
+        width, 0, 0, height, width, height,
+    ])
+}
+
+// helper function to set disk vertices with width and height
+function setDisk(width, height, steps = 100) {
+    // width/height define the disk's size (like rectangle width/height), not a center coordinate
+    const rx = width / 2;
+    const ry = height / 2;
+
+    // angle between each point in radians
+    const angleStep = (Math.PI * 2.0) / steps;
+
+    // can't do append to a fixed sized Float32Array, so we build in a normal array first
+    // centered at the origin (0,0) - position is handled via transformation matrices
+    const vertices = [0, 0];
+
+    for (let i = 0; i <= steps; i++) {
+        const angle = angleStep * i;
+        const newX = rx * Math.cos(angle);
+        const newY = ry * Math.sin(angle);
+        vertices.push(newX, newY);
+    }
+
+    return new Float32Array(vertices);
+}
+
+function makeColorBuffer(color, vertexCount) {
+    const colors = [];
+    for (let i = 0; i < vertexCount; i++) {
+        colors.push(color[0], color[1], color[2], color[3]);
+    }
+    return new Float32Array(colors);
+}
+
+class Shape {
+    constructor(vertices, mMatrix, color, drawType) {
+        this.vertices = vertices;
+        this.mMatrix = mMatrix;
+        this.color = color;
+        this.drawType = drawType;
+    }
+    
+    drawRectangle(parentMatrix = setIdentityMatrix()) {
+        // pass vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertices), gl.STATIC_DRAW);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        const vertexCount = this.vertices.length / 2;
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, makeColorBuffer(this.color, vertexCount), gl.STATIC_DRAW);
+        gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+        // pass vMatrix and color
+        const combinedMatrix = multiplyMatrix3x3(parentMatrix, this.mMatrix);
+        gl.uniformMatrix3fv(mMatrixLocation, false, new Float32Array(combinedMatrix));
+        // gl.uniform4f(colorLocation, this.color[0], this.color[1], this.color[2], this.color[3]);
+
+        gl.drawArrays(gl.TRIANGLES, 0, this.vertices.length / 2);
+    }
+
+    drawDisk(parentMatrix = setIdentityMatrix()) {
+        // pass vertex data
+        gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(this.vertices), gl.STATIC_DRAW);
+        gl.vertexAttribPointer(positionLocation, 2, gl.FLOAT, false, 0, 0);
+
+        const vertexCount = this.vertices.length / 2;
+        gl.bindBuffer(gl.ARRAY_BUFFER, colorBuffer);
+        gl.bufferData(gl.ARRAY_BUFFER, makeColorBuffer(this.color, vertexCount), gl.STATIC_DRAW);
+        gl.vertexAttribPointer(colorLocation, 4, gl.FLOAT, false, 0, 0);
+
+        // pass vMatrix and color
+        const combinedMatrix = multiplyMatrix3x3(parentMatrix, this.mMatrix);
+        gl.uniformMatrix3fv(mMatrixLocation, false, new Float32Array(combinedMatrix));
+        // gl.uniform4f(colorLocation, this.color[0], this.color[1], this.color[2], this.color[3]);
+
+        gl.drawArrays(gl.TRIANGLE_FAN, 0, this.vertices.length / 2);
+    }
+}   
+
+class ObjectWebGL {
+    constructor(mMatrix = setIdentityMatrix()) {
+        this.shapes = [];
+        this.mMatrix = mMatrix;
+        this.children = [];
+    }
+
+    local_transform(matrix){
+        this.mMatrix = multiplyMatrix3x3(this.mMatrix, matrix);
+    }
+
+    draw(parentMatrix = setIdentityMatrix()) {
+        const combinedMatrix = multiplyMatrix3x3(parentMatrix, this.mMatrix);
+        for (const shape of this.shapes) {
+            if (shape.drawType == 'rectangle') {
+                shape.drawRectangle(combinedMatrix);
+            }
+            else {
+                shape.drawDisk(combinedMatrix);
+            }
+        }
+
+        // children may be shapes or parents (ObjectWebGL)
+        for (const child of this.children) {
+            if (typeof child.draw === 'function') {
+                // recursive draw if object is a parent (ObjectWebGL)
+                child.draw(combinedMatrix);
+            } else if (child.drawType === 'rectangle') {
+                child.drawRectangle(combinedMatrix);
+            } else {
+                child.drawDisk(combinedMatrix);
+            }
+        }
+    }
+}
+
+// layer 1 - face
+const face = new ObjectWebGL(setTranslationMatrix(250, 250));
+
+const head = new Shape(setRectangle(250, 250), setTranslationMatrix(-125, -125), [0.7, 0, 0.9, 1], 'rectangle');
+const mouth = new Shape(setRectangle(100, 25), setTranslationMatrix(-50, -100), [0.9, 0.4, 0.4, 1], 'rectangle');
+
+face.shapes.push(head);
+face.shapes.push(mouth);
+
+// layer 2 (children of face) - nose, leftEye, rightEye, mouth
+
+// nose
+const nose = new ObjectWebGL(setTranslationMatrix(-5, -25));
+nose.shapes.push(new Shape(setRectangle(15, 50), setIdentityMatrix(), [0.85, 0.5, 0.2, 1], 'rectangle'));
+face.children.push(nose);
+
+
+// eyes
+const leftEye = new ObjectWebGL(setTranslationMatrix(-75, 75));
+const rightEye = new ObjectWebGL(setTranslationMatrix(75, 75));
+
+leftEye.shapes.push(new Shape(setDisk(50, 50), setIdentityMatrix(), [0.9, 0.9, 0.9, 1], 'disk'));
+rightEye.shapes.push(new Shape(setDisk(50, 50), setIdentityMatrix(), [0.9, 0.9, 0.9, 1], 'disk'));
+
+face.children.push(leftEye);
+face.children.push(rightEye);
+
+// layer 3 (children of nose and eyes) - leftNostril, rightNostril, leftPupil, rightPupil
+
+// left/right nostril
+const leftNostril = new ObjectWebGL(setIdentityMatrix());
+const rightNostril = new ObjectWebGL(setIdentityMatrix());
+
+leftNostril.shapes.push(new Shape(setDisk(15, 15), setIdentityMatrix(), [0.85, 0.4, 0.2, 1], 'disk'));
+rightNostril.shapes.push(new Shape(setDisk(15, 15), setTranslationMatrix(15, 0), [0.85, 0.4, 0.2, 1], 'disk'));
+
+nose.children.push(leftNostril);
+nose.children.push(rightNostril);
+
+// left/right pupil
+const leftPupil = new ObjectWebGL(setIdentityMatrix());
+const rightPupil = new ObjectWebGL(setIdentityMatrix());
+
+leftPupil.shapes.push(new Shape(setDisk(25, 25), setTranslationMatrix(10, 3), [0, 0, 0, 1], 'disk'));
+rightPupil.shapes.push(new Shape(setDisk(25, 25), setTranslationMatrix(10, 3), [0, 0, 0, 1], 'disk'));
+
+leftEye.children.push(leftPupil);
+rightEye.children.push(rightPupil);
+
+// initialize buffer and Location
+const colorLocation = gl.getAttribLocation(program, 'aColor');
+const positionLocation = gl.getAttribLocation(program, 'aPosition');
+const pMatrixLocation = gl.getUniformLocation(program, "pMatrix");
+const mMatrixLocation = gl.getUniformLocation(program, "mMatrix");
+gl.enableVertexAttribArray(positionLocation);
+gl.enableVertexAttribArray(colorLocation);
+const positionBuffer = gl.createBuffer();
+const colorBuffer = gl.createBuffer();
+
+// pass the projection Matrix
+const pMatrix = [
+    2/canvas.width,     0,                  0,
+    0,                  2/canvas.height,    0,
+    -1,                 -1,                 1,
+]
+gl.uniformMatrix3fv(pMatrixLocation, false, pMatrix);
+
+// key events (for translations, rotations, and scalings of each hierarchy)
+document.addEventListener('keydown', (e)=>{
+    // translation of parent (face)
+    if (e.key == 'w'){ // up
+        face.local_transform(setTranslationMatrix(0, 10));
+    }
+    else if (e.key == 's'){ // down
+        face.local_transform(setTranslationMatrix(0, -10));
+    }
+    else if (e.key == 'a'){ // right
+        face.local_transform(setTranslationMatrix(-10, 0));
+    }
+    else if (e.key == 'd'){ // left
+        face.local_transform(setTranslationMatrix(10, 0));
+    }
+
+    // rotation of parent (face)
+    else if (e.key == 'q'){ // counter-clockwise
+        face.local_transform(setRotationMatrix(5));
+    }
+    else if (e.key == 'e'){ // clockwise
+        face.local_transform(setRotationMatrix(-5));
+    }
+
+    // scaling of parent (face)
+    else if (e.key == 'z'){ // larger
+        face.local_transform(setScalingMatrix(1.1, 1.1));
+    }
+    else if (e.key == 'x'){ // smaller
+        face.local_transform(setScalingMatrix(0.9, 0.9));
+    }
+
+    // translation of nose
+    else if (e.key == '1'){ // left
+        nose.local_transform(setTranslationMatrix(-5, 0));
+    }
+    else if (e.key == '2'){ // right
+        nose.local_transform(setTranslationMatrix(5, 0));
+    }
+    else if (e.key == '3'){ // up
+        nose.local_transform(setTranslationMatrix(0, 5));
+    }
+    else if (e.key == '4'){ // down
+        nose.local_transform(setTranslationMatrix(0, -5));
+    }
+
+    // rotation of nose
+    else if (e.key == '5'){ // counter-clockwise
+        nose.local_transform(setRotationMatrix(5));
+    }
+    else if (e.key == '6'){ // clockwise
+        nose.local_transform(setRotationMatrix(-5));
+    }
+
+    // scaling of nose
+    else if (e.key == '7'){ // larger
+        nose.local_transform(setScalingMatrix(1.1, 1.1));
+    }
+    else if (e.key == '8'){ // smaller
+        nose.local_transform(setScalingMatrix(0.9, 0.9));
+    }
+
+    // translation of eyes (both leftEye and rightEye)
+    else if (e.key == 'ArrowRight'){ // right
+        leftEye.local_transform(setTranslationMatrix(5, 0));
+        rightEye.local_transform(setTranslationMatrix(5, 0));
+    }
+    else if (e.key == 'ArrowLeft'){ // left
+        leftEye.local_transform(setTranslationMatrix(-5, 0));
+        rightEye.local_transform(setTranslationMatrix(-5, 0));
+    }
+    else if (e.key == 'ArrowDown'){ // up
+        leftEye.local_transform(setTranslationMatrix(0, -5));
+        rightEye.local_transform(setTranslationMatrix(0, -5));
+    }
+    else if (e.key == 'ArrowUp'){ // down
+        leftEye.local_transform(setTranslationMatrix(0, 5));
+        rightEye.local_transform(setTranslationMatrix(0, 5));
+    }
+
+    // translation of leftPupil
+    else if (e.key == 't'){ // left
+        leftPupil.local_transform(setTranslationMatrix(-5, 0));
+    }
+    else if (e.key == 'y'){ // right
+        leftPupil.local_transform(setTranslationMatrix(5, 0));
+    }
+    else if (e.key == 'u'){ // up
+        leftPupil.local_transform(setTranslationMatrix(0, 5));
+    }
+    else if (e.key == 'i'){ // down
+        leftPupil.local_transform(setTranslationMatrix(0, -5));
+    }
+
+    // rotation of leftPupil
+    else if (e.key == 'o'){ // counter-clockwise
+        leftPupil.local_transform(setRotationMatrix(10));
+    }
+    else if (e.key == 'p'){ // clockwise
+        leftPupil.local_transform(setRotationMatrix(-10));
+    }
+
+    // scaling of leftPupil
+    else if (e.key == '['){ // larger
+        leftPupil.local_transform(setScalingMatrix(1.1, 1.1));
+    }
+    else if (e.key == ']'){ // smaller
+        leftPupil.local_transform(setScalingMatrix(0.9, 0.9));
+    }
+
+    // translation of rightPupil
+    else if (e.key == 'c'){ // left
+        rightPupil.local_transform(setTranslationMatrix(-5, 0));
+    }
+    else if (e.key == 'v'){ // right
+        rightPupil.local_transform(setTranslationMatrix(5, 0));
+    }
+    else if (e.key == 'b'){ // up
+        rightPupil.local_transform(setTranslationMatrix(0, 5));
+    }
+    else if (e.key == 'n'){ // down
+        rightPupil.local_transform(setTranslationMatrix(0, -5));
+    }
+
+    // rotation of rightPupil
+    else if (e.key == 'm'){ // counter clock-wise
+        rightPupil.local_transform(setRotationMatrix(10));
+    }
+    else if (e.key == ','){ // clockwise
+        rightPupil.local_transform(setRotationMatrix(-10));
+    }
+
+    // scaling of rightPupil
+    else if (e.key == '.'){ // larger
+        rightPupil.local_transform(setScalingMatrix(1.1, 1.1));
+    }
+    else if (e.key == '/'){ // smaller
+        rightPupil.local_transform(setScalingMatrix(0.9, 0.9));
+    }
+
+    gl.viewport(0, 0, canvas.width, canvas.height);
+    gl.clearColor(0, 0, 0, 1);
+    gl.clear(gl.COLOR_BUFFER_BIT);
+
+    face.draw();
+}, false);
+
+// Create instruction in html
+const instructions = document.createElement('div');
+instructions.style.position = 'absolute';
+instructions.style.top = '10px';
+instructions.style.left = '520px';
+instructions.style.color = 'black';
+instructions.style.fontFamily = 'Arial, sans-serif';
+instructions.style.fontSize = '14px';
+instructions.style.lineHeight = '1.6';
+instructions.innerHTML = ``;
+document.body.appendChild(instructions);
+
+// Initial draw
+gl.viewport(0, 0, canvas.width, canvas.height);
+gl.clearColor(0, 0, 0, 1);
+gl.clear(gl.COLOR_BUFFER_BIT);
+
+face.draw();
+
+
+</script>
+</body>
+</html>
