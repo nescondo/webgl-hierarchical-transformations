@@ -1,7 +1,7 @@
 # Simple showcase of hierarchical transformations in WebGL.
 
 <ol>
-    <li>3 layers of hierarchical transformation to include diagram and README.md</li>
+    <li>3 layers of hierarchical transformation within the 2D scene.</li>
     <li>Transformations and key inputs for each object and layer are as follows:</li><ol>
         <li>Layer 1 - face</li>
             <ol>
